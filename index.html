@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>线下狼人杀法官助手</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- MQTT over WebSocket -->
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .dark-radial {
+      background: radial-gradient(circle at 50% 40%, #1e1b4b 0%, #0f172a 60%, #020617 100%);
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    .dead-avatar {
+      filter: grayscale(100%) contrast(85%);
+      opacity: 0.55;
+    }
+  </style>
+</head>
+<body class="dark-radial text-slate-100 flex flex-col font-sans">
+
+  <!-- ==================== 1. 首页：昵称与建房/加入 ==================== -->
+  <div id="lobby-screen" class="fixed inset-0 z-50 bg-slate-950/95 flex flex-col items-center justify-center p-4 backdrop-blur-md">
+    <div class="w-full max-w-sm bg-slate-900/95 border border-indigo-500/30 p-6 rounded-3xl shadow-2xl flex flex-col items-center">
+      <div class="w-14 h-14 bg-indigo-950/80 border border-indigo-500/50 rounded-2xl flex items-center justify-center mb-3 shadow-lg">
+        <i data-lucide="moon" class="w-8 h-8 text-amber-400"></i>
+      </div>
+      <h1 class="text-xl font-black text-white tracking-widest mb-1">线下狼人杀</h1>
+      <p class="text-xs text-indigo-300/80 mb-5">法官控盘 · 实时查验 · 身份分发</p>
+
+      <!-- 统一昵称输入框 -->
+      <div class="w-full mb-4">
+        <label class="block text-xs font-bold text-indigo-200 mb-1">你的昵称</label>
+        <div class="relative">
+          <input id="input-nickname" type="text" maxlength="8" placeholder="请输入你的昵称..." class="w-full py-2.5 px-3 bg-slate-950 border border-slate-700 rounded-xl text-center text-sm font-bold text-white focus:outline-none focus:border-indigo-500 transition">
+          <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
+        </div>
+      </div>
+
+      <!-- 选项一：成为房主 (法官) -->
+      <button id="btn-host-create" type="button" class="w-full py-3 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 active:scale-[0.98] text-slate-950 font-black rounded-xl shadow-lg shadow-amber-900/40 flex items-center justify-center space-x-2 transition cursor-pointer text-sm">
+        <i data-lucide="crown" class="w-4 h-4"></i>
+        <span>成为房主 (法官)</span>
+      </button>
+
+      <!-- 换行分割线 -->
+      <div class="flex items-center w-full my-3.5 text-slate-500 text-xs">
+        <div class="flex-1 border-t border-slate-800"></div>
+        <span class="px-3 text-slate-400">或者加入已有房间</span>
+        <div class="flex-1 border-t border-slate-800"></div>
+      </div>
+
+      <!-- 选项二：以昵称加入指定房间 -->
+      <div class="w-full space-y-2.5">
+        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-indigo-300">输入 6 位数字房间号：</span>
+          </div>
+          <input id="input-room-code" type="text" maxlength="6" placeholder="例如: 888666" class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-center text-lg font-mono tracking-widest text-white focus:outline-none focus:border-indigo-500 uppercase">
+        </div>
+
+        <button id="btn-join-room" type="button" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold rounded-xl transition flex items-center justify-center space-x-2 cursor-pointer text-sm shadow-lg shadow-indigo-900/40">
+          <i data-lucide="log-in" class="w-4 h-4"></i>
+          <span id="btn-join-label">以此名加入房间</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. 顶部双行导航栏 ==================== -->
+  <header class="bg-slate-950/90 backdrop-blur-md border-b border-indigo-500/20 px-3 py-1.5 flex flex-col justify-center space-y-1.5 shrink-0 z-20 text-xs">
+    
+    <!-- 第一行：在线指示、房号、我：昵称、刷新按钮、退出按钮 -->
+    <div class="flex items-center justify-between w-full">
+      <div class="flex items-center space-x-1.5">
+        <span id="conn-indicator-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]" title="网络正常"></span>
+        <div class="flex items-center bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700 space-x-1 font-mono">
+          <span class="text-indigo-400 font-bold">房号:</span>
+          <span id="lbl-room-id" class="text-amber-300 font-black tracking-wider">------</span>
+        </div>
+        <div class="text-[11px] text-slate-300 truncate max-w-[85px] sm:max-w-[120px]">
+          我:<span id="lbl-my-name" class="font-bold text-white ml-0.5">--</span>
+        </div>
+        <!-- 本局内刷新按钮 -->
+        <button id="btn-refresh-game" onclick="manualRefreshGame()" class="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-emerald-300 text-[10px] shadow cursor-pointer active:scale-95 transition" title="刷新同步存续状态">
+          <i data-lucide="rotate-cw" id="icon-refresh" class="w-3 h-3"></i>
+          <span>刷新</span>
+        </button>
+      </div>
+
+      <div class="flex items-center space-x-1.5">
+        <button onclick="exitGame()" class="p-1 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 border border-slate-700 cursor-pointer" title="退出房间">
+          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- 第二行：白天流程、夜晚流程、记录便签（全员开放）、法官专属配置板子 -->
+    <div class="flex items-center justify-between w-full pt-0.5">
+      <div class="flex items-center space-x-2">
+        <!-- 白天流程 -->
+        <button onclick="openProcessModal('day')" class="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-[11px] font-bold flex items-center space-x-1 cursor-pointer">
+          <i data-lucide="sun" class="w-3.5 h-3.5"></i>
+          <span>白天流程</span>
+        </button>
+
+        <!-- 夜晚流程 -->
+        <button onclick="openProcessModal('night')" class="px-2 py-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 rounded-lg text-[11px] font-bold flex items-center space-x-1 cursor-pointer">
+          <i data-lucide="moon" class="w-3.5 h-3.5"></i>
+          <span>夜晚流程</span>
+        </button>
+
+        <!-- 记录便签 (所有玩家与法官均可见并可用) -->
+        <button id="btn-player-notes" onclick="openNotesModal()" class="px-2 py-1 bg-teal-600/80 hover:bg-teal-500 text-teal-100 border border-teal-400/50 rounded-lg text-[11px] font-bold shadow flex items-center space-x-1 cursor-pointer" title="个人打字记录便签">
+          <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+          <span>便签</span>
+        </button>
+      </div>
+
+      <div class="flex items-center space-x-1.5">
+        <!-- 法官专属：板子配置 -->
+        <button id="btn-judge-settings" onclick="openJudgeConfigModal()" class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-bold shadow hidden flex items-center space-x-1 cursor-pointer">
+          <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i>
+          <span>板子配置</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== 3. 牌桌区域 (法官居中，玩家四周环绕) ==================== -->
+  <main class="flex-1 relative overflow-hidden flex flex-col">
+    
+    <!-- 牌桌环形容器 -->
+    <div id="table-canvas" class="relative w-full flex-1 flex items-center justify-center p-2">
+      
+      <!-- 牌桌底板 -->
+      <div class="w-[88vw] h-[88vw] max-w-[340px] max-h-[340px] rounded-full border border-indigo-500/20 bg-slate-900/40 shadow-inner flex items-center justify-center relative">
+        <div class="w-[68vw] h-[68vw] max-w-[260px] max-h-[260px] rounded-full border border-indigo-400/10 flex items-center justify-center">
+          <span class="text-[10px] tracking-widest text-slate-600 uppercase font-mono">Game Table</span>
+        </div>
+      </div>
+
+      <!-- 中心法官座位 (屏幕正中央) -->
+      <div id="center-judge-slot" class="absolute z-10 flex flex-col items-center justify-center pointer-events-none">
+        <div class="w-14 h-14 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 border-2 border-amber-300 shadow-xl shadow-amber-950 flex items-center justify-center relative">
+          <i data-lucide="gavel" class="w-7 h-7 text-slate-950"></i>
+          <span class="absolute -bottom-1 bg-slate-950 border border-amber-400 text-amber-300 text-[9px] px-1.5 py-0.2 rounded-full font-bold">法官</span>
+        </div>
+        <span id="center-judge-name" class="mt-1 text-xs font-bold text-amber-200 tracking-wide max-w-[80px] truncate">法官</span>
+      </div>
+
+      <!-- 环绕玩家容器 (由 JS 动态计算定位) -->
+      <div id="player-seats-ring" class="absolute inset-0 pointer-events-auto"></div>
+    </div>
+
+    <!-- 底部：玩家本人信息卡 / 法官发牌操作条 -->
+    <div class="shrink-0 bg-slate-950/90 border-t border-indigo-500/20 p-3 z-20">
+      
+      <!-- 法官操作条 -->
+      <div id="judge-action-bar" class="hidden flex items-center justify-between">
+        <div class="flex flex-col">
+          <span class="text-[11px] text-slate-400">当前在席人数: <strong id="lbl-joined-count" class="text-amber-400 font-mono text-sm">0</strong> / <span id="lbl-target-count" class="font-mono">--</span></span>
+          <span id="lbl-deal-status" class="text-[10px] text-indigo-300">尚未发牌</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="openJudgeConfigModal()" class="px-2.5 py-1.5 bg-slate-800 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold cursor-pointer">
+            调整配置
+          </button>
+          <button id="btn-deal-cards" onclick="dealCardsToPlayers()" class="px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/50 cursor-pointer">
+            确认并发牌
+          </button>
+        </div>
+      </div>
+
+      <!-- 普通玩家角色面板 (仅本人可见角色和技能说明，死法不公开) -->
+      <div id="player-role-bar" class="hidden flex flex-col space-y-1">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="text-xs text-slate-400">我的身份:</span>
+            <span id="my-role-badge" class="px-2 py-0.5 rounded text-xs font-black bg-slate-800 text-slate-300 border border-slate-600">等待发牌...</span>
+            <span id="my-alive-status" class="text-[11px] text-emerald-400 font-bold ml-1">【存活】</span>
+          </div>
+          <button onclick="toggleRoleDesc()" class="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer">
+            <span id="role-desc-btn-text">查看技能</span>
+          </button>
+        </div>
+
+        <div id="my-role-desc-box" class="bg-slate-900/90 border border-indigo-500/30 p-2.5 rounded-xl text-xs text-slate-300 leading-relaxed transition-all">
+          暂未收到发牌，请等待法官在手机端发牌。
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ==================== 4. 法官配置弹窗 ==================== -->
+  <div id="modal-judge-config" class="fixed inset-0 z-40 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-slate-900 border border-indigo-500/40 w-full max-w-sm rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-xs">
+      <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="shield" class="w-4 h-4 text-amber-400"></i>
+          <h3 class="font-bold text-sm text-white">游戏配置</h3>
+        </div>
+        <button onclick="closeJudgeConfigModal()" class="text-slate-400 hover:text-white p-1 cursor-pointer">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="p-4 overflow-y-auto space-y-3.5 flex-1 no-scrollbar">
+        <!-- 房间号提示 -->
+        <div class="bg-slate-950 p-2.5 rounded-xl border border-amber-500/30 flex items-center justify-between">
+          <div>
+            <span class="text-slate-400 text-[11px] block">房间号 (让其他人输入)：</span>
+            <span id="cfg-room-code" class="text-lg font-black text-amber-300 font-mono tracking-widest">------</span>
+          </div>
+          <button onclick="copyRoomCode()" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold cursor-pointer">
+            复制
+          </button>
+        </div>
+
+        <!-- 游戏人数 (4 - 12人) -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="font-bold text-indigo-300">游戏玩家人数 (4 ~ 12 人)</span>
+            <span id="lbl-slider-players" class="font-mono text-sm font-black text-amber-300">8 人</span>
+          </div>
+          <input id="slider-players" type="range" min="4" max="12" value="8" step="1" oninput="onPlayerCountSlider(this.value)" class="w-full accent-indigo-500 cursor-pointer">
+        </div>
+
+        <!-- 是否上警开关 -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700 flex items-center justify-between">
+          <div>
+            <span class="font-bold text-indigo-300 block">当局游戏内是否上警</span>
+            <span class="text-[10px] text-slate-400">开启后第一天白天进入竞选警长流程</span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="chk-allow-police" class="sr-only peer" checked onchange="onConfigChange()">
+            <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+
+        <!-- 普通狼人 & 平民数量 (自选) -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700 space-y-2">
+          <span class="font-bold text-indigo-300 block">普通角色数量 (自选)</span>
+          <div class="grid grid-cols-2 gap-2">
+            <!-- 普通狼人 -->
+            <div class="bg-slate-900/80 p-2 rounded-lg flex items-center justify-between">
+              <span class="text-rose-400 font-bold">🐺 普通狼人</span>
+              <div class="flex items-center space-x-1.5">
+                <button onclick="adjustCount('wolf', -1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 font-bold">-</button>
+                <span id="cnt-wolf" class="w-4 text-center font-mono font-bold text-white">2</span>
+                <button onclick="adjustCount('wolf', 1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 font-bold">+</button>
+              </div>
+            </div>
+
+            <!-- 平民 -->
+            <div class="bg-slate-900/80 p-2 rounded-lg flex items-center justify-between">
+              <span class="text-slate-300 font-bold">🌾 平民</span>
+              <div class="flex items-center space-x-1.5">
+                <button onclick="adjustCount('villager', -1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 font-bold">-</button>
+                <span id="cnt-villager" class="w-4 text-center font-mono font-bold text-white">2</span>
+                <button onclick="adjustCount('villager', 1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 font-bold">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 神职与特殊角色 (只能为0或1) -->
+        <div class="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-indigo-300">特殊/神职角色 (仅限 0 或 1)</span>
+            <span class="text-[10px] text-slate-400">点击切换开启/关闭</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <!-- 预言家 -->
+            <button type="button" onclick="toggleSpecialRole('seer')" id="btn-role-seer" class="p-2 rounded-lg border text-left flex items-center justify-between transition cursor-pointer">
+              <span class="font-bold">🔮 预言家</span>
+              <span class="status-tag font-mono text-[10px] px-1 rounded">开</span>
+            </button>
+
+            <!-- 女巫 -->
+            <button type="button" onclick="toggleSpecialRole('witch')" id="btn-role-witch" class="p-2 rounded-lg border text-left flex items-center justify-between transition cursor-pointer">
+              <span class="font-bold">🧪 女巫</span>
+              <span class="status-tag font-mono text-[10px] px-1 rounded">开</span>
+            </button>
+
+            <!-- 猎人 -->
+            <button type="button" onclick="toggleSpecialRole('hunter')" id="btn-role-hunter" class="p-2 rounded-lg border text-left flex items-center justify-between transition cursor-pointer">
+              <span class="font-bold">🏹 猎人</span>
+              <span class="status-tag font-mono text-[10px] px-1 rounded">开</span>
+            </button>
+
+            <!-- 守卫 -->
+            <button type="button" onclick="toggleSpecialRole('guard')" id="btn-role-guard" class="p-2 rounded-lg border text-left flex items-center justify-between transition cursor-pointer">
+              <span class="font-bold">🛡️ 守卫</span>
+              <span class="status-tag font-mono text-[10px] px-1 rounded">开</span>
+            </button>
+
+            <!-- 白狼王 -->
+            <button type="button" onclick="toggleSpecialRole('whiteWolf')" id="btn-role-whiteWolf" class="col-span-2 p-2 rounded-lg border text-left flex items-center justify-between transition cursor-pointer">
+              <span class="font-bold text-red-400">👑 白狼王</span>
+              <span class="status-tag font-mono text-[10px] px-1 rounded">关</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 牌数平衡校验器 -->
+        <div id="deck-balance-hint" class="p-2.5 rounded-xl text-xs font-bold flex items-center justify-between bg-emerald-950/60 border border-emerald-500/40 text-emerald-300">
+          <span>角色牌总计: <strong id="sum-role-cards" class="font-mono text-sm">8</strong> 张</span>
+          <span id="sum-balance-msg" class="text-[11px]">与设定人数吻合</span>
+        </div>
+      </div>
+
+      <div class="p-3 border-t border-slate-800 bg-slate-950 flex justify-end">
+        <button onclick="closeJudgeConfigModal()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow cursor-pointer">
+          保存并返回牌桌
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 5. 全员便签速记本弹窗 (每位玩家均独立拥有) ==================== -->
+  <div id="modal-notes" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-slate-900 border border-teal-500/50 w-full max-w-sm rounded-2xl shadow-2xl flex flex-col h-[75vh] max-h-[560px] overflow-hidden text-xs">
+      <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-950/80">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="notebook-pen" class="w-4 h-4 text-teal-400"></i>
+          <h3 id="notes-modal-title" class="font-bold text-sm text-white">速记便签</h3>
+        </div>
+        <button onclick="closeNotesModal()" class="text-slate-400 hover:text-white p-1 cursor-pointer">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="p-3 flex-1 flex flex-col space-y-2">
+        <div class="text-[11px] text-teal-300/80">个人私密便签，记录发言线索、票型或夜间信息 (本地自动保存)：</div>
+        <textarea id="notepad-input" oninput="savePersonalNotes()" placeholder="随手记：&#10;1号起跳预言家验3金水&#10;4号悍跳给2查杀&#10;5号站边1，8号站边4..." class="w-full flex-1 p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none focus:border-teal-500 leading-relaxed font-mono resize-none"></textarea>
+      </div>
+
+      <div class="p-2.5 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+        <button onclick="clearPersonalNotes()" class="px-2.5 py-1 text-rose-400 hover:text-rose-300 text-xs font-semibold cursor-pointer">
+          清空记录
+        </button>
+        <button onclick="closeNotesModal()" class="px-4 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold shadow cursor-pointer">
+          保存关闭
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 6. 法官管理玩家操作弹窗 (含踢出房间) ==================== -->
+  <div id="modal-manage-player" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-amber-500/40 w-full max-w-xs rounded-2xl p-4 shadow-2xl flex flex-col space-y-3 text-xs">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+        <div class="flex items-center space-x-1.5">
+          <i data-lucide="user-cog" class="w-4 h-4 text-amber-400"></i>
+          <span class="font-bold text-white text-sm" id="manage-target-name">操作玩家</span>
+        </div>
+        <button onclick="closeManageModal()" class="text-slate-400 hover:text-white cursor-pointer">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- 身份展示 (仅法官可见) -->
+      <div class="bg-slate-950 p-2 rounded-xl border border-slate-800 flex items-center justify-between">
+        <span class="text-slate-400">本局角色：</span>
+        <span id="manage-target-role" class="font-bold text-amber-300">--</span>
+      </div>
+
+      <!-- 警长标记模块：上警 / 退选 / 警长 -->
+      <div>
+        <label class="block text-indigo-300 font-bold mb-1.5">警长/竞选状态标注</label>
+        <div class="grid grid-cols-4 gap-1.5">
+          <button onclick="setPlayerPoliceStatus('none')" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 text-center font-semibold hover:bg-slate-700 cursor-pointer">无</button>
+          <button onclick="setPlayerPoliceStatus('candidate')" class="p-1.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-300 text-center font-bold hover:bg-amber-900 cursor-pointer">上警</button>
+          <button onclick="setPlayerPoliceStatus('quit')" class="p-1.5 rounded-lg bg-slate-800 border border-slate-600 text-slate-400 text-center font-semibold hover:bg-slate-700 cursor-pointer">退选</button>
+          <button onclick="setPlayerPoliceStatus('sheriff')" class="p-1.5 rounded-lg bg-yellow-500 text-slate-950 text-center font-black shadow hover:bg-yellow-400 cursor-pointer">★警长</button>
+        </div>
+      </div>
+
+      <!-- 存活 / 标记出局死亡原因 -->
+      <div>
+        <label class="block text-rose-300 font-bold mb-1.5">存活与死亡方式标注 (仅法官可见)</label>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button onclick="setPlayerDeath('alive')" class="col-span-2 p-1.5 rounded-lg bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 font-bold hover:bg-emerald-900 cursor-pointer text-center">
+            💚 恢复存活 (撤销死亡)
+          </button>
+          <button onclick="setPlayerDeath('wolf')" class="p-2 rounded-lg bg-slate-800 hover:bg-rose-950 border border-slate-700 text-rose-300 font-bold cursor-pointer text-left">
+            🐺 狼人刀
+          </button>
+          <button onclick="setPlayerDeath('poison')" class="p-2 rounded-lg bg-slate-800 hover:bg-purple-950 border border-slate-700 text-purple-300 font-bold cursor-pointer text-left">
+            🧪 女巫毒
+          </button>
+          <button onclick="setPlayerDeath('gun')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-950 border border-slate-700 text-amber-300 font-bold cursor-pointer text-left">
+            🏹 猎人枪
+          </button>
+          <button onclick="setPlayerDeath('vote')" class="p-2 rounded-lg bg-slate-800 hover:bg-red-950 border border-slate-700 text-red-300 font-bold cursor-pointer text-left">
+            🗳️ 投票驱逐
+          </button>
+        </div>
+      </div>
+
+      <!-- 法官新增功能：直接将该玩家踢出房间彻底移出演员席 -->
+      <div class="pt-1 border-t border-slate-800">
+        <button onclick="kickPlayerOut()" class="w-full py-2 bg-rose-600/80 hover:bg-rose-600 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-1 cursor-pointer transition shadow">
+          <i data-lucide="user-minus" class="w-3.5 h-3.5"></i>
+          <span>彻底踢出房间并移除席位</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 7. 白天与夜晚流程弹窗 ==================== -->
+  <div id="modal-process-flow" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-indigo-500/40 w-full max-w-sm rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <h3 id="process-flow-title" class="font-black text-base text-white flex items-center space-x-2">
+          <span>流程指南</span>
+        </h3>
+        <button onclick="closeProcessModal()" class="text-slate-400 hover:text-white cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div id="process-flow-content" class="py-4 space-y-3 overflow-y-auto text-xs leading-relaxed text-slate-200">
+        <!-- 动态注入 -->
+      </div>
+
+      <button onclick="closeProcessModal()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow cursor-pointer mt-2">
+        关闭提示
+      </button>
+    </div>
+  </div>
+
+  <!-- 提示浮层 Toast -->
+  <div id="game-toast" class="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-indigo-500/60 text-indigo-300 px-3.5 py-1.5 rounded-full text-xs shadow-xl transition-opacity duration-300 pointer-events-none opacity-0"></div>
+
+  <!-- ==================== JavaScript 核心逻辑 ==================== -->
+  <script>
+    // ==========================================
+    // 1. 角色百科字典与文字说明
+    // ==========================================
+    const ROLES_INFO = {
+      wolf: {
+        name: '普通狼人',
+        camp: '坏人阵营',
+        avatarText: '狼',
+        color: 'text-rose-400',
+        badgeBg: 'bg-rose-950 border-rose-500 text-rose-300',
+        desc: '普通狼人：坏人阵营，天黑后杀人，神职全灭或平民全灭为胜利。白天自爆后跳过发言投票，直接进入新一轮天黑。'
+      },
+      whiteWolf: {
+        name: '白狼王',
+        camp: '坏人阵营',
+        avatarText: '白',
+        color: 'text-red-500',
+        badgeBg: 'bg-red-950 border-red-500 text-red-300',
+        desc: '白狼王：坏人阵营，天黑后杀人，神职全灭或平民全灭为胜利。白天自爆后可带走场上一人，同时跳过发言投票，直接进入新一轮天黑。'
+      },
+      villager: {
+        name: '平民',
+        camp: '好人阵营',
+        avatarText: '民',
+        color: 'text-slate-300',
+        badgeBg: 'bg-slate-800 border-slate-600 text-slate-300',
+        desc: '平民：好人阵营，没有技能，淘汰所有狼人后胜利。'
+      },
+      seer: {
+        name: '预言家',
+        camp: '好人神职',
+        avatarText: '预',
+        color: 'text-cyan-400',
+        badgeBg: 'bg-cyan-950 border-cyan-500 text-cyan-300',
+        desc: '预言家：好人神职，每晚可以查验一名玩家，淘汰所有狼人后胜利。'
+      },
+      witch: {
+        name: '女巫',
+        camp: '好人神职',
+        avatarText: '巫',
+        color: 'text-purple-400',
+        badgeBg: 'bg-purple-950 border-purple-500 text-purple-300',
+        desc: '女巫：好人神职，拥有一瓶解药和一瓶毒药，淘汰所有狼人后胜利。'
+      },
+      hunter: {
+        name: '猎人',
+        camp: '好人神职',
+        avatarText: '猎',
+        color: 'text-amber-400',
+        badgeBg: 'bg-amber-950 border-amber-500 text-amber-300',
+        desc: '猎人：好人神职，被狼人刀或投票放逐后可开枪带走一人，淘汰所有狼人后胜利。'
+      },
+      guard: {
+        name: '守卫',
+        camp: '好人神职',
+        avatarText: '守',
+        color: 'text-emerald-400',
+        badgeBg: 'bg-emerald-950 border-emerald-500 text-emerald-300',
+        desc: '守卫：好人神职，每晚保护一名玩家免受狼人的攻击，不能连续两晚保护同一名玩家，无法守住女巫的毒药，淘汰所有狼人后胜利。'
+      }
+    };
+
+    const JUDGE_DEATH_TEXTS = {
+      alive: '存活',
+      wolf: '狼人刀',
+      poison: '女巫毒',
+      gun: '猎人枪',
+      vote: '投票驱逐'
+    };
+
+    // ==========================================
+    // 2. 状态模型 (State Model)
+    // ==========================================
+    let state = {
+      roomCode: '',
+      clientId: 'p_' + Math.random().toString(16).substring(2, 10),
+      myNickname: '',
+      isJudge: false,
+      judgeNickname: '法官',
+      judgeClientId: '',
+      
+      // 板子配置
+      config: {
+        targetPlayers: 8,
+        allowPolice: true,
+        wolfCount: 2,
+        villagerCount: 2,
+        specials: {
+          seer: true,
+          witch: true,
+          hunter: true,
+          guard: true,
+          whiteWolf: false
+        }
+      },
+
+      isDealt: false,
+      players: [],        // [{ clientId, nickname, roleKey, isAlive, deathType, policeStatus }]
+      activeManagingId: null
+    };
+
+    // ==========================================
+    // 3. 通信核心：MQTT over WebSocket
+    // ==========================================
+    let mqttClient = null;
+    let heartbeatTimer = null;
+    const BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
+
+    function initMqtt(roomCode, isJudge) {
+      state.roomCode = roomCode;
+      state.isJudge = isJudge;
+      const topic = `werewolf/room/${roomCode}`;
+
+      mqttClient = mqtt.connect(BROKER_URL, {
+        clientId: state.clientId,
+        clean: true,
+        keepalive: 15,
+        connectTimeout: 8000,
+        reconnectPeriod: 1500
+      });
+
+      mqttClient.on('connect', () => {
+        updateNetworkIndicator(true);
+        mqttClient.subscribe(topic, { qos: 1 }, (err) => {
+          if (err) return;
+          if (isJudge) {
+            state.judgeClientId = state.clientId;
+            state.judgeNickname = state.myNickname || '法官';
+            document.getElementById('lbl-room-id').innerText = roomCode;
+            document.getElementById('cfg-room-code').innerText = roomCode;
+            document.getElementById('center-judge-name').innerText = state.judgeNickname;
+            loadPersonalNotes();
+            renderAll();
+            openJudgeConfigModal();
+          } else {
+            loadPersonalNotes();
+            sendToRoom({
+              type: 'REQ_JOIN',
+              clientId: state.clientId,
+              nickname: state.myNickname
+            });
+          }
+        });
+
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+          if (mqttClient && mqttClient.connected) {
+            sendToRoom({
+              type: 'HEARTBEAT',
+              clientId: state.clientId,
+              nickname: state.myNickname
+            });
+          }
+        }, 8000);
+      });
+
+      mqttClient.on('offline', () => updateNetworkIndicator(false));
+      mqttClient.on('close', () => updateNetworkIndicator(false));
+      mqttClient.on('message', (t, payload) => {
+        try {
+          const packet = JSON.parse(payload.toString());
+          handleMessage(packet);
+        } catch (e) {}
+      });
+    }
+
+    function sendToRoom(packet) {
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(`werewolf/room/${state.roomCode}`, JSON.stringify(packet), { qos: 1 });
+      }
+    }
+
+    function handleMessage(packet) {
+      if (!packet) return;
+
+      // 1. 玩家加入请求
+      if (packet.type === 'REQ_JOIN') {
+        if (state.isJudge) {
+          let p = state.players.find(x => x.clientId === packet.clientId);
+          if (!p) {
+            if (state.players.length >= state.config.targetPlayers) {
+              sendToRoom({ type: 'ROOM_FULL', targetClientId: packet.clientId });
+              return;
+            }
+            state.players.push({
+              clientId: packet.clientId,
+              nickname: packet.nickname || `玩家${state.players.length + 1}`,
+              roleKey: null,
+              isAlive: true,
+              deathType: 'alive',
+              policeStatus: 'none'
+            });
+          } else {
+            p.nickname = packet.nickname;
+          }
+          broadcastState();
+          renderAll();
+        }
+      }
+
+      // 2. 玩家主动退出：保留头像，标记为投票驱逐出局
+      else if (packet.type === 'PLAYER_LEAVE') {
+        if (state.isJudge) {
+          const target = state.players.find(x => x.clientId === packet.clientId);
+          if (target) {
+            target.isAlive = false;
+            target.deathType = 'vote';
+            broadcastState();
+            renderAll();
+            showToast(`玩家【${target.nickname}】已退出，标记为驱逐出局`);
+          }
+        }
+      }
+
+      // 3. 被法官踢出房间通知
+      else if (packet.type === 'PLAYER_KICKED') {
+        if (packet.targetClientId === state.clientId) {
+          alert('你已被法官移出本房间！');
+          if (mqttClient) mqttClient.end();
+          location.reload();
+        }
+      }
+
+      // 4. 房间已满
+      else if (packet.type === 'ROOM_FULL') {
+        if (packet.targetClientId === state.clientId) {
+          alert('该房间人数已满，无法加入！');
+          location.reload();
+        }
+      }
+
+      // 5. 收到同步请求：法官广播最新全量状态
+      else if (packet.type === 'REQ_SYNC') {
+        if (state.isJudge) {
+          broadcastState();
+        }
+      }
+
+      // 6. 全量状态同步
+      else if (packet.type === 'STATE_SYNC') {
+        if (!state.isJudge) {
+          state.judgeClientId = packet.judgeClientId;
+          state.judgeNickname = packet.judgeNickname;
+          state.config = packet.config;
+          state.isDealt = packet.isDealt;
+          state.players = packet.players;
+          document.getElementById('lbl-room-id').innerText = state.roomCode;
+          document.getElementById('center-judge-name').innerText = state.judgeNickname;
+          renderAll();
+        }
+      }
+
+      // 7. 配置同步
+      else if (packet.type === 'CONFIG_SYNC') {
+        if (!state.isJudge) {
+          state.config = packet.config;
+          renderAll();
+        }
+      }
+    }
+
+    function broadcastState() {
+      sendToRoom({
+        type: 'STATE_SYNC',
+        judgeClientId: state.judgeClientId,
+        judgeNickname: state.judgeNickname,
+        config: state.config,
+        isDealt: state.isDealt,
+        players: state.players
+      });
+    }
+
+    // ==========================================
+    // 4. 本局内手动刷新机制 (保证停止动画)
+    // ==========================================
+    function manualRefreshGame() {
+      const icon = document.getElementById('icon-refresh');
+      if (icon) {
+        icon.classList.remove('animate-spin');
+        void icon.offsetWidth; // 触发回流重置
+        icon.classList.add('animate-spin');
+      }
+
+      try {
+        if (!mqttClient || !mqttClient.connected) {
+          if (mqttClient) mqttClient.reconnect();
+          else if (state.roomCode) initMqtt(state.roomCode, state.isJudge);
+        }
+
+        if (state.isJudge) {
+          broadcastState();
+        } else {
+          sendToRoom({
+            type: 'REQ_SYNC',
+            clientId: state.clientId
+          });
+        }
+        renderAll();
+        showToast('房间状态已刷新');
+      } catch (err) {
+        console.error('Refresh error:', err);
+      } finally {
+        // 确保无论如何都在 600ms 后停掉旋转
+        setTimeout(() => {
+          if (icon) icon.classList.remove('animate-spin');
+        }, 600);
+      }
+    }
+
+    // ==========================================
+    // 5. 首页交互 (成为房主 / 加入房间)
+    // ==========================================
+    document.getElementById('input-nickname').addEventListener('input', (e) => {
+      const val = e.target.value.trim();
+      const btnJoin = document.getElementById('btn-join-label');
+      btnJoin.innerText = val ? `以 ${val} 为名加入房间` : '以原名加入房间';
+    });
+
+    document.getElementById('btn-host-create').addEventListener('click', () => {
+      const nick = document.getElementById('input-nickname').value.trim();
+      if (!nick) {
+        alert('请输入你的昵称！');
+        document.getElementById('input-nickname').focus();
+        return;
+      }
+      state.myNickname = nick;
+      document.getElementById('lbl-my-name').innerText = nick;
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      document.getElementById('lobby-screen').classList.add('hidden');
+      initMqtt(code, true);
+    });
+
+    document.getElementById('btn-join-room').addEventListener('click', () => {
+      const nick = document.getElementById('input-nickname').value.trim();
+      if (!nick) {
+        alert('请输入你的昵称！');
+        document.getElementById('input-nickname').focus();
+        return;
+      }
+      const code = document.getElementById('input-room-code').value.trim();
+      if (!code || code.length !== 6) {
+        alert('请输入 6 位数字房间号！');
+        return;
+      }
+      state.myNickname = nick;
+      document.getElementById('lbl-my-name').innerText = nick;
+      document.getElementById('lobby-screen').classList.add('hidden');
+      initMqtt(code, false);
+    });
+
+    // ==========================================
+    // 6. 法官板子与角色配置
+    // ==========================================
+    function onPlayerCountSlider(val) {
+      state.config.targetPlayers = parseInt(val, 10);
+      document.getElementById('lbl-slider-players').innerText = `${val} 人`;
+      autoBalanceConfig();
+      renderConfigUI();
+    }
+
+    function onConfigChange() {
+      state.config.allowPolice = document.getElementById('chk-allow-police').checked;
+      broadcastConfig();
+    }
+
+    function adjustCount(type, delta) {
+      if (type === 'wolf') {
+        state.config.wolfCount = Math.max(1, state.config.wolfCount + delta);
+      } else if (type === 'villager') {
+        state.config.villagerCount = Math.max(0, state.config.villagerCount + delta);
+      }
+      renderConfigUI();
+      broadcastConfig();
+    }
+
+    function toggleSpecialRole(key) {
+      state.config.specials[key] = !state.config.specials[key];
+      renderConfigUI();
+      broadcastConfig();
+    }
+
+    function autoBalanceConfig() {
+      const n = state.config.targetPlayers;
+      if (n <= 6) {
+        state.config.wolfCount = 2;
+        state.config.villagerCount = 2;
+        state.config.specials = { seer: true, witch: true, hunter: false, guard: false, whiteWolf: false };
+      } else if (n <= 9) {
+        state.config.wolfCount = 2;
+        state.config.villagerCount = 2;
+        state.config.specials = { seer: true, witch: true, hunter: true, guard: true, whiteWolf: false };
+      } else {
+        state.config.wolfCount = 3;
+        state.config.villagerCount = 4;
+        state.config.specials = { seer: true, witch: true, hunter: true, guard: true, whiteWolf: true };
+      }
+    }
+
+    function calculateTotalCards() {
+      let sum = state.config.wolfCount + state.config.villagerCount;
+      Object.keys(state.config.specials).forEach(k => {
+        if (state.config.specials[k]) sum += 1;
+      });
+      return sum;
+    }
+
+    function renderConfigUI() {
+      document.getElementById('slider-players').value = state.config.targetPlayers;
+      document.getElementById('lbl-slider-players').innerText = `${state.config.targetPlayers} 人`;
+      document.getElementById('chk-allow-police').checked = state.config.allowPolice;
+      document.getElementById('cnt-wolf').innerText = state.config.wolfCount;
+      document.getElementById('cnt-villager').innerText = state.config.villagerCount;
+
+      const specials = state.config.specials;
+      ['seer', 'witch', 'hunter', 'guard', 'whiteWolf'].forEach(k => {
+        const btn = document.getElementById(`btn-role-${k}`);
+        if (!btn) return;
+        const tag = btn.querySelector('.status-tag');
+        if (specials[k]) {
+          btn.className = 'p-2 rounded-lg border border-indigo-500 bg-indigo-950/70 text-indigo-200 text-left flex items-center justify-between transition cursor-pointer shadow-sm';
+          tag.innerText = '已开启';
+          tag.className = 'status-tag font-mono text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold';
+        } else {
+          btn.className = 'p-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-400 text-left flex items-center justify-between transition cursor-pointer hover:border-slate-500';
+          tag.innerText = '已关闭';
+          tag.className = 'status-tag font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400';
+        }
+      });
+
+      const total = calculateTotalCards();
+      const target = state.config.targetPlayers;
+      document.getElementById('sum-role-cards').innerText = total;
+
+      const balanceBox = document.getElementById('deck-balance-hint');
+      const balanceMsg = document.getElementById('sum-balance-msg');
+      if (total === target) {
+        balanceBox.className = 'p-2.5 rounded-xl text-xs font-bold flex items-center justify-between bg-emerald-950/60 border border-emerald-500/40 text-emerald-300';
+        balanceMsg.innerText = '✓ 与设定人数吻合';
+      } else {
+        balanceBox.className = 'p-2.5 rounded-xl text-xs font-bold flex items-center justify-between bg-rose-950/60 border border-rose-500/40 text-rose-300';
+        balanceMsg.innerText = total > target ? `多出 ${total - target} 张牌` : `缺少 ${target - total} 张牌`;
+      }
+    }
+
+    function broadcastConfig() {
+      if (state.isJudge) {
+        sendToRoom({
+          type: 'CONFIG_SYNC',
+          config: state.config
+        });
+      }
+    }
+
+    function openJudgeConfigModal() {
+      renderConfigUI();
+      document.getElementById('modal-judge-config').classList.remove('hidden');
+    }
+    function closeJudgeConfigModal() {
+      document.getElementById('modal-judge-config').classList.add('hidden');
+      renderAll();
+    }
+
+    // ==========================================
+    // 7. 全体玩家通用独立便签功能
+    // ==========================================
+    function openNotesModal() {
+      const title = document.getElementById('notes-modal-title');
+      title.innerText = state.isJudge ? '法官速记备忘录' : `便签速记 (${state.myNickname || '玩家'})`;
+      loadPersonalNotes();
+      document.getElementById('modal-notes').classList.remove('hidden');
+    }
+    function closeNotesModal() {
+      document.getElementById('modal-notes').classList.add('hidden');
+    }
+    function getNotesKey() {
+      return `werewolf_notes_${state.roomCode}_${state.clientId}`;
+    }
+    function savePersonalNotes() {
+      const text = document.getElementById('notepad-input').value;
+      if (state.roomCode) {
+        localStorage.setItem(getNotesKey(), text);
+      }
+    }
+    function loadPersonalNotes() {
+      if (!state.roomCode) return;
+      const saved = localStorage.getItem(getNotesKey());
+      if (saved !== null) {
+        document.getElementById('notepad-input').value = saved;
+      }
+    }
+    function clearPersonalNotes() {
+      if (confirm('确定要清空当前的记录吗？')) {
+        document.getElementById('notepad-input').value = '';
+        if (state.roomCode) {
+          localStorage.removeItem(getNotesKey());
+        }
+      }
+    }
+
+    // ==========================================
+    // 8. 发牌逻辑 (法官控盘分发)
+    // ==========================================
+    function dealCardsToPlayers() {
+      const totalCards = calculateTotalCards();
+      const target = state.config.targetPlayers;
+      if (totalCards !== target) {
+        alert(`角色牌总数(${totalCards})与设定游戏人数(${target})不符，请先在配置中配平！`);
+        openJudgeConfigModal();
+        return;
+      }
+      if (state.players.length === 0) {
+        alert('当前尚未有玩家入座，请让玩家输入房间号加入！');
+        return;
+      }
+      if (!confirm(`确定为当前已入座的 ${state.players.length} 名玩家发牌吗？`)) return;
+
+      let deck = [];
+      for (let i = 0; i < state.config.wolfCount; i++) deck.push('wolf');
+      for (let i = 0; i < state.config.villagerCount; i++) deck.push('villager');
+      Object.keys(state.config.specials).forEach(k => {
+        if (state.config.specials[k]) deck.push(k);
+      });
+
+      for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+      }
+
+      state.players.forEach((p, idx) => {
+        p.roleKey = deck[idx] || 'villager';
+        p.isAlive = true;
+        p.deathType = 'alive';
+        p.policeStatus = 'none';
+      });
+
+      state.isDealt = true;
+      broadcastState();
+      renderAll();
+      showToast('发牌成功！角色卡已分发到玩家手机');
+    }
+
+    // ==========================================
+    // 9. 法官标记与玩家管理 (含踢出房间)
+    // ==========================================
+    function openManagePlayerModal(clientId) {
+      if (!state.isJudge) return;
+      const target = state.players.find(p => p.clientId === clientId);
+      if (!target) return;
+
+      state.activeManagingId = clientId;
+      document.getElementById('manage-target-name').innerText = `管理【${target.nickname}】`;
+      const role = ROLES_INFO[target.roleKey];
+      document.getElementById('manage-target-role').innerText = role ? `${role.name} (${role.camp})` : '尚未发牌';
+      document.getElementById('modal-manage-player').classList.remove('hidden');
+    }
+
+    function closeManageModal() {
+      document.getElementById('modal-manage-player').classList.add('hidden');
+      state.activeManagingId = null;
+    }
+
+    function setPlayerPoliceStatus(status) {
+      if (!state.activeManagingId) return;
+      const target = state.players.find(p => p.clientId === state.activeManagingId);
+      if (!target) return;
+
+      if (status === 'sheriff') {
+        state.players.forEach(p => { if (p.policeStatus === 'sheriff') p.policeStatus = 'none'; });
+      }
+
+      target.policeStatus = status;
+      broadcastState();
+      renderAll();
+      closeManageModal();
+      showToast(`已更新【${target.nickname}】警徽标记`);
+    }
+
+    function setPlayerDeath(deathType) {
+      if (!state.activeManagingId) return;
+      const target = state.players.find(p => p.clientId === state.activeManagingId);
+      if (!target) return;
+
+      if (deathType === 'alive') {
+        target.isAlive = true;
+        target.deathType = 'alive';
+      } else {
+        target.isAlive = false;
+        target.deathType = deathType;
+      }
+
+      broadcastState();
+      renderAll();
+      closeManageModal();
+      showToast(`已标记【${target.nickname}】：${JUDGE_DEATH_TEXTS[deathType]}`);
+    }
+
+    // 法官功能：彻底移出演员席位并通知被踢客户端重置
+    function kickPlayerOut() {
+      if (!state.activeManagingId) return;
+      const targetIdx = state.players.findIndex(p => p.clientId === state.activeManagingId);
+      if (targetIdx === -1) return;
+
+      const target = state.players[targetIdx];
+      if (!confirm(`确定要将玩家【${target.nickname}】彻底踢出房间并移除其席位吗？`)) return;
+
+      const kickedId = target.clientId;
+      state.players.splice(targetIdx, 1);
+
+      // 通知对应客户端退出
+      sendToRoom({
+        type: 'PLAYER_KICKED',
+        targetClientId: kickedId
+      });
+
+      broadcastState();
+      renderAll();
+      closeManageModal();
+      showToast(`已将【${target.nickname}】踢出房间`);
+    }
+
+    // ==========================================
+    // 10. 环形排布与牌桌渲染 (死法视野严格隔离)
+    // ==========================================
+    function renderAll() {
+      renderHeaderAndActionBar();
+      renderRingSeats();
+      renderMyRoleBar();
+    }
+
+    function renderHeaderAndActionBar() {
+      const isJudge = state.isJudge;
+      document.getElementById('btn-judge-settings').classList.toggle('hidden', !isJudge);
+      document.getElementById('judge-action-bar').classList.toggle('hidden', !isJudge);
+      document.getElementById('player-role-bar').classList.toggle('hidden', isJudge);
+
+      if (isJudge) {
+        document.getElementById('lbl-joined-count').innerText = state.players.length;
+        document.getElementById('lbl-target-count').innerText = state.config.targetPlayers;
+        document.getElementById('lbl-deal-status').innerText = state.isDealt ? '牌局进行中 (已发牌)' : '准备就绪 (未发牌)';
+      }
+    }
+
+    function renderRingSeats() {
+      const ring = document.getElementById('player-seats-ring');
+      ring.innerHTML = '';
+      const total = state.players.length;
+      if (total === 0) return;
+
+      const rect = ring.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const radius = Math.min(centerX, centerY) - 48;
+
+      state.players.forEach((p, idx) => {
+        const angle = (idx / total) * 2 * Math.PI - (Math.PI / 2);
+        const x = centerX + radius * Math.cos(angle);
+        const y = centerY + radius * Math.sin(angle);
+
+        const node = document.createElement('div');
+        node.className = 'absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer transition-transform active:scale-95';
+        node.style.left = `${x}px`;
+        node.style.top = `${y}px`;
+        node.onclick = () => {
+          if (state.isJudge) openManagePlayerModal(p.clientId);
+        };
+
+        const role = ROLES_INFO[p.roleKey];
+        const isDead = !p.isAlive;
+
+        // 警徽标记徽章
+        let policeBadgeHtml = '';
+        if (p.policeStatus === 'sheriff') {
+          policeBadgeHtml = `<span class="absolute -top-1.5 -left-1.5 bg-yellow-400 text-slate-950 font-black text-[9px] px-1 rounded-full shadow-md border border-white">警长</span>`;
+        } else if (p.policeStatus === 'candidate') {
+          policeBadgeHtml = `<span class="absolute -top-1.5 -left-1.5 bg-amber-600 text-white font-bold text-[8px] px-1 rounded-full shadow">上警</span>`;
+        } else if (p.policeStatus === 'quit') {
+          policeBadgeHtml = `<span class="absolute -top-1.5 -left-1.5 bg-slate-700 text-slate-300 text-[8px] px-1 rounded-full">退选</span>`;
+        }
+
+        // 头像展示：法官看全视角角色；普通玩家只能看到通用人头
+        let avatarInner = `<i data-lucide="user" class="w-5 h-5 text-slate-300"></i>`;
+        let ringBorder = isDead ? 'border-slate-600 bg-slate-800' : 'border-indigo-400 bg-slate-900';
+
+        if (state.isJudge && role) {
+          avatarInner = `<span class="font-black text-xs ${role.color}">${role.avatarText}</span>`;
+          ringBorder = isDead ? 'border-slate-700 bg-slate-900' : 'border-amber-400 bg-slate-900';
+        }
+
+        // 死亡说明标签：法官看具体死因缩写，其他玩家仅看到统一的“亡”标签
+        let deathBadge = '';
+        if (isDead) {
+          if (state.isJudge) {
+            const reasonShort = { wolf: '刀', poison: '毒', gun: '枪', vote: '投' }[p.deathType] || '亡';
+            deathBadge = `<span class="absolute -bottom-1 -right-1 bg-rose-600 text-white font-bold text-[8px] px-1 py-0.2 rounded-full border border-black">${reasonShort}</span>`;
+          } else {
+            deathBadge = `<span class="absolute -bottom-1 -right-1 bg-slate-700 text-rose-300 font-bold text-[8px] px-1 py-0.2 rounded-full border border-slate-900">亡</span>`;
+          }
+        }
+
+        // 玩家名称与文字状态：法官看到具体死因，普通玩家仅看到【已出局】
+        let statusUnderText = '';
+        if (isDead) {
+          if (state.isJudge) {
+            statusUnderText = `<span class="text-[8px] text-rose-400 scale-90 -mt-0.5">${JUDGE_DEATH_TEXTS[p.deathType]}</span>`;
+          } else {
+            statusUnderText = `<span class="text-[8px] text-slate-400 scale-90 -mt-0.5">已出局</span>`;
+          }
+        }
+
+        node.innerHTML = `
+          <div class="relative">
+            <div class="w-11 h-11 rounded-full border-2 ${ringBorder} flex items-center justify-center shadow-lg ${isDead ? 'dead-avatar' : ''}">
+              ${avatarInner}
+            </div>
+            ${policeBadgeHtml}
+            ${deathBadge}
+          </div>
+          <span class="mt-0.5 text-[10px] font-bold ${isDead ? 'text-slate-500 line-through' : 'text-slate-200'} truncate max-w-[65px] text-center">
+            ${p.nickname}
+          </span>
+          ${statusUnderText}
+        `;
+
+        ring.appendChild(node);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function renderMyRoleBar() {
+      if (state.isJudge) return;
+
+      const myData = state.players.find(p => p.clientId === state.clientId);
+      const badge = document.getElementById('my-role-badge');
+      const statusLbl = document.getElementById('my-alive-status');
+      const descBox = document.getElementById('my-role-desc-box');
+
+      if (!myData || !state.isDealt || !myData.roleKey) {
+        badge.innerText = '等待法官发牌...';
+        badge.className = 'px-2 py-0.5 rounded text-xs font-bold bg-slate-800 text-slate-400';
+        statusLbl.innerText = '【等待中】';
+        descBox.innerText = '暂未收到发牌，请等待法官在手机端发牌。';
+        return;
+      }
+
+      const role = ROLES_INFO[myData.roleKey];
+      badge.innerText = `${role.name} (${role.camp})`;
+      badge.className = `px-2 py-0.5 rounded text-xs font-black border ${role.badgeBg}`;
+
+      if (myData.isAlive) {
+        statusLbl.innerText = '【存活】';
+        statusLbl.className = 'text-[11px] text-emerald-400 font-bold ml-1';
+      } else {
+        statusLbl.innerText = `【已出局】`;
+        statusLbl.className = 'text-[11px] text-rose-400 font-bold ml-1';
+      }
+
+      descBox.innerHTML = `
+        <div class="font-bold text-white mb-1 flex items-center justify-between">
+          <span>${role.name} · ${role.camp}</span>
+          ${myData.policeStatus === 'sheriff' ? '<span class="text-yellow-400 font-bold text-[10px]">★ 警长 (1.5票)</span>' : ''}
+        </div>
+        <div>${role.desc}</div>
+      `;
+    }
+
+    let roleDescVisible = true;
+    function toggleRoleDesc() {
+      const box = document.getElementById('my-role-desc-box');
+      const btn = document.getElementById('role-desc-btn-text');
+      roleDescVisible = !roleDescVisible;
+      box.classList.toggle('hidden', !roleDescVisible);
+      btn.innerText = roleDescVisible ? '收起技能' : '展开技能';
+    }
+
+    // ==========================================
+    // 11. 流程指南弹窗 (白天流程 / 夜晚流程)
+    // ==========================================
+    function openProcessModal(type) {
+      const modal = document.getElementById('modal-process-flow');
+      const title = document.getElementById('process-flow-title');
+      const content = document.getElementById('process-flow-content');
+
+      if (type === 'night') {
+        title.innerHTML = `<i data-lucide="moon" class="w-5 h-5 text-indigo-400"></i><span class="text-indigo-300">夜晚行动流程</span>`;
+        content.innerHTML = `
+          <div class="space-y-2.5">
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-indigo-400 text-sm">1</span>
+              <div>
+                <strong class="text-white block">天黑请闭眼</strong>
+                <span class="text-slate-400 text-[11px]">全场玩家闭眼，保持安静。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-rose-400 text-sm">2</span>
+              <div>
+                <strong class="text-white block">狼人指定猎杀对象</strong>
+                <span class="text-slate-400 text-[11px]">狼人睁眼统一目标，法官手势确认。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-cyan-400 text-sm">3</span>
+              <div>
+                <strong class="text-white block">预言家查验身份</strong>
+                <span class="text-slate-400 text-[11px]">预言家查验一人，法官以大拇指向上(好人)/向下(狼人)手势反馈。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-purple-400 text-sm">4</span>
+              <div>
+                <strong class="text-white block">女巫是否用药</strong>
+                <span class="text-slate-400 text-[11px]">告知死者，是否使用解药或毒药。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-amber-400 text-sm">5</span>
+              <div>
+                <strong class="text-white block">猎人（首轮确认身份）</strong>
+                <span class="text-slate-400 text-[11px]">猎人睁眼向法官示意确认开枪状态。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-emerald-400 text-sm">6</span>
+              <div>
+                <strong class="text-white block">守卫保护人选</strong>
+                <span class="text-slate-400 text-[11px]">守卫选择一名玩家守护（不可连续两晚同守一人，无法守住女巫毒药）。</span>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        title.innerHTML = `<i data-lucide="sun" class="w-5 h-5 text-amber-400"></i><span class="text-amber-300">白天行动流程</span>`;
+        content.innerHTML = `
+          <div class="space-y-2.5">
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-amber-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-amber-400 text-sm">1</span>
+              <div>
+                <strong class="text-white block">上警</strong>
+                <span class="text-slate-400 text-[11px]">首个白天开始争夺警徽（1.5倍投票权、决定发言顺序）。未开启上警则跳过。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-amber-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-amber-400 text-sm">2</span>
+              <div>
+                <strong class="text-white block">法官宣布死讯</strong>
+                <span class="text-slate-400 text-[11px]">宣布昨夜出局玩家。警长死亡需要传递或撕毁警徽。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-amber-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-amber-400 text-sm">3</span>
+              <div>
+                <strong class="text-white block">警长决定发言顺序</strong>
+                <span class="text-slate-400 text-[11px]">由警长选择死左/死右或顺时针/逆时针依次发言。</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-amber-500/30 flex items-start space-x-2">
+              <span class="font-mono font-bold text-amber-400 text-sm">4</span>
+              <div>
+                <strong class="text-white block">放逐投票</strong>
+                <span class="text-slate-400 text-[11px]">存活玩家同时举票放逐一人，得票最高者出局留遗言。</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (window.lucide) lucide.createIcons();
+      modal.classList.remove('hidden');
+    }
+
+    function closeProcessModal() {
+      document.getElementById('modal-process-flow').classList.add('hidden');
+    }
+
+    // ==========================================
+    // 12. 工具辅助函数与安全退出
+    // ==========================================
+    function updateNetworkIndicator(online) {
+      const dot = document.getElementById('conn-indicator-dot');
+      if (!dot) return;
+      if (online) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]';
+      } else {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_6px_#f43f5e]';
+      }
+    }
+
+    function copyRoomCode() {
+      if (!state.roomCode) return;
+      navigator.clipboard.writeText(state.roomCode).then(() => {
+        showToast(`房间号 ${state.roomCode} 已复制`);
+      }).catch(() => {
+        alert(`房间号: ${state.roomCode}`);
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('game-toast');
+      if (!toast) return;
+      toast.innerText = msg;
+      toast.classList.remove('opacity-0');
+      toast.classList.add('opacity-100');
+      setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0');
+      }, 1800);
+    }
+
+    function exitGame() {
+      if (confirm('确定要退出当前房间吗？')) {
+        sendToRoom({
+          type: 'PLAYER_LEAVE',
+          clientId: state.clientId,
+          nickname: state.myNickname
+        });
+        setTimeout(() => {
+          if (mqttClient) mqttClient.end();
+          location.reload();
+        }, 150);
+      }
+    }
+
+    window.addEventListener('resize', renderRingSeats);
+    window.addEventListener('DOMContentLoaded', () => {
+      if (window.lucide) lucide.createIcons();
+    });
+  </script>
+</body>
+</html>
